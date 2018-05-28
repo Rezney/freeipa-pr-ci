@@ -291,7 +291,7 @@ def main():
                     logger.warning(e)
                 except (EnvironmentError, RuntimeError) as e:
                     logger.error(e)
-                    sentry_report_exception({"module": "github"})
+                    #sentry_report_exception({"module": "github"})
                     sleep(ERROR_BACKOFF_TIME)
                 finally:
                     exit_handler.unregister_task()

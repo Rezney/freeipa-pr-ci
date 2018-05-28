@@ -789,7 +789,7 @@ class JobDispatcher(AbcCallable):
         except TaskException as e:
             description = str(e)
             state = State.ERROR
-            sentry_report_exception({"module": "tasks"})
+            #sentry_report_exception({"module": "tasks"})
         else:
             description = job.description
             if job.returncode == 0:

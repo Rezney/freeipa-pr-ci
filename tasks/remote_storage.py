@@ -1,9 +1,88 @@
 import os
 import re
+import boto3
+from jinja2 import Template
+from datetime import datetime
 
 from .common import PopenTask, TaskException
-from .constants import (FEDORAPEOPLE_KEY_PATH, FEDORAPEOPLE_DIR, UUID_RE,
-                        JOBS_DIR)
+from .constants import (CLOUD_DIR, CLOUD_JOBS_DIR, CLOUD_JOBS_URL, CLOUD_URL,
+                        CLOUD_BUCKET, UUID_RE, JOBS_DIR, TASKS_DIR)
+
+
+def create_jobs_index():
+    """
+    We generate jobs index usin
+    """
+    client = boto3.client('s3')
+    paginator = client.get_paginator('list_objects_v2')
+    objects = []
+    iterator = paginator.paginate(Bucket=CLOUD_BUCKET, Prefix='jobs/', Delimiter='/', PaginationConfig={'PageSize': None})
+    for job_dir in iterator.search('CommonPrefixes'):
+        job_id = job_dir.get('Prefix')
+        for job in client.list_objects(Bucket=CLOUD_BUCKET, Prefix=job_id, Delimiter='/')['Contents']:
+            name = job['Key'].split(os.sep)[-2]
+            mtime_obj = job['LastModified']
+            mtime = mtime_obj.strftime('%c')
+            size = job['Size']
+            type = 'dir'
+            objects.append({'name': name,
+                            'mtime': mtime,
+                            'size': size,
+                            'type': type})
+
+    client.put_object(Body=generate_index(objects), Bucket=CLOUD_BUCKET,
+                      Key=CLOUD_JOBS_DIR+'index.html')
+
+
+def generate_index(obj_data):
+    """
+    Generate Jinja2 template with all AWS S3 objects (files and directories)
+    """
+    with open(os.path.join(TASKS_DIR, 'upload_artifacts.html'), 'r') as file_:
+        template = Template(file_.read())
+    return template.render(
+        {'tree': obj_data, 'cloud_jobs_url': CLOUD_JOBS_URL,
+         'cloud_url': CLOUD_URL})
+
+
+def write_index(obj_data):
+    """
+    Write index.html into every directory.
+    """
+    index_loc = os.path.join(obj_data['local_path'], 'index.html')
+    with open(index_loc, 'w') as fd:
+        fd.write(generate_index(obj_data))
+
+
+def create_local_indeces(job_dir):
+    """
+    Go through whole job result directory structure and gather all files with
+    metadata for every directory. Note: AWS S3 does not support classic web
+    server browseability capabilities so we do this in order to avoid
+    JavaScript on storage side.
+    """
+    job_dir_start = job_dir.rfind(os.sep) + 1
+    uuid = job_dir.split(os.sep)[-1]
+    for path, dirs, files in os.walk(job_dir):
+        objects = []
+        if path != job_dir:
+            prev_path = '/'.join(path[job_dir_start:].split(os.sep)[:-1])
+            objects.append({'name': 'Parent directory', 'type': 'parent_link',
+                            'prev_path': prev_path})
+        for obj in dirs+files:
+            m_time_epoch = os.stat(os.path.join(path,obj)).st_mtime
+            mtime = datetime.fromtimestamp(m_time_epoch).strftime('%c')
+            size = os.stat(os.path.join(path,obj)).st_size
+            type = 'dir' if os.path.isdir(os.path.join(path,obj)) else 'file'
+            objects.append({'name': obj,
+                            'mtime': mtime,
+                            'size': size,
+                            'type': type})
+        dest_path = path[job_dir_start:]
+        obj_data = {'local_path': path, 'remote_path': dest_path, 'uuid': uuid,
+                  'objects': objects}
+        write_index(obj_data)
+        del objects
 
 
 class GzipLogFiles(PopenTask):
@@ -28,64 +107,34 @@ class GzipLogFiles(PopenTask):
         self.shell = True
 
 
-class RsyncTask(PopenTask):
+class CloudSyncTask(PopenTask):
     def __init__(self, src, dest, extra_args=None, **kwargs):
         if extra_args is None:
             extra_args = []
 
         cmd = [
-            'rsync',
-            '-r',
-            '--chmod=0755',
+            'aws',
+            's3',
+            'sync',
             src,
-            dest
+            dest,
         ]
-        cmd[2:2] = extra_args  # Extend argument list at index 2
+        cmd + extra_args
 
-        super(RsyncTask, self).__init__(cmd, **kwargs)
-
-
-class SshRsyncTask(RsyncTask):
-    def __init__(self, src, dest, extra_args=None, ssh_private_key_path=None,
-                 **kwargs):
-        if extra_args is None:
-            extra_args = []
-
-        if ssh_private_key_path is not None:
-            extra_args.extend([
-                '-e',
-                (
-                    'ssh -i {key} '
-                    '-o "StrictHostKeyChecking no" '
-                    '-o "UserKnownHostsFile /dev/null" '
-                    '-o "LogLevel ERROR"'
-                ).format(key=ssh_private_key_path)
-            ])
-
-        super(SshRsyncTask, self).__init__(src, dest, extra_args, **kwargs)
+        super(CloudSyncTask, self).__init__(cmd, **kwargs)
 
 
-class FedoraPeopleUpload(SshRsyncTask):
+class CloudUpload(CloudSyncTask):
     def __init__(self, uuid, **kwargs):
         if not re.match(UUID_RE, uuid):
             raise TaskException(self, "Invalid job UUID")
 
-        super(FedoraPeopleUpload, self).__init__(
+        create_local_indeces(os.path.join(JOBS_DIR, uuid))
+
+        super(CloudUpload, self).__init__(
             os.path.join(JOBS_DIR, uuid),
-            FEDORAPEOPLE_DIR.format(path='jobs/'),
-            ssh_private_key_path=FEDORAPEOPLE_KEY_PATH,
+            os.path.join(CLOUD_DIR, CLOUD_JOBS_DIR, uuid),
             **kwargs
         )
 
-
-class FedoraPeopleDownload(SshRsyncTask):
-    def __init__(self, uuid, **kwargs):
-        if not re.match(UUID_RE, uuid):
-            raise TaskException(self, "Invalid job UUID")
-
-        super(FedoraPeopleDownload, self).__init__(
-            FEDORAPEOPLE_DIR.format(path='jobs/' + uuid),
-            JOBS_DIR,
-            ssh_private_key_path=FEDORAPEOPLE_KEY_PATH,
-            **kwargs
-        )
+        create_jobs_index()

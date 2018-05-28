@@ -17,9 +17,9 @@ is chosen from a queue that is periodically constructed by polling
 GitHub API for PRs. To execute a job, runners use custom VM templates which are
 downloaded from [VagrantCloud](https://app.vagrantup.com/freeipa). Once a job
 finishes, logs are uploaded to
-[fedorapeople.org](https://fedorapeople.org/groups/freeipa/prci/) where they're
-publicly accessible to the community. Finally, the job result along with the logs'
-URL are reported to GitHub via a
+[FreeIPA-org AWS S3](freeipa-org-pr-ci.s3-website.eu-central-1.amazonaws.com/jobs/)
+where they're publicly accessible to the community. Finally, the job result along
+with the logs' URL are reported to GitHub via a
 [commit status](https://developer.github.com/v3/repos/statuses/).
 
 ### A. Generating the job queue
@@ -136,7 +136,7 @@ config file to the target branch.
 ![phase-C](images/phase-C.svg)
 
 Once the job is finished (or killed), it will upload the logs to
-fedorapeople.org using rsync and `freeipa_pr_ci` ssh key. These logs are
+public Amazon AWS S3 storage. These logs are
 publicly accessible and their URL will be generated and reported to the commit
 status of the PR's job. The commit status' *state* will change to one of
 `success`/`failure`/`error`. If any of the individual jobs for the PR are
@@ -364,7 +364,7 @@ new Fedora is branched (bump `fedora_releasever`).
 The system was designed to not be dependent on any single machine. For this
 reason, all the runners can act independently and they don't know about
 each other. This removes a potential central point of failure (altough some
-remain -- GitHub API or fedorapoeple.org storage). This design decisions comes
+remain -- GitHub API or AWS S3 storage). This design decisions comes
 with some trade-off and limitation described below.
 
 ### Polling GitHub PR Queue
