@@ -31,7 +31,7 @@ def create_jobs_index():
                             'type': type})
 
     client.put_object(Body=generate_index(objects), Bucket=CLOUD_BUCKET,
-                      Key=CLOUD_JOBS_DIR+'index.html')
+                      Key=CLOUD_JOBS_DIR+'index.html', ContentEncoding='utf-8')
 
 
 def generate_index(obj_data):

@@ -22,15 +22,12 @@
       {% for item in tree.objects %}
       <tr>
         {% if item.type == 'parent_link' %}
-        <td><i class="fas fa-caret-up"><a href='{{ cloud_jobs_url }}{{ item.prev_path }}'> {{ item.name }} </a></i></td>
+        <td><i class="fas fa-caret-up"><a href='../'> {{ item.name }} </a></i></td>
         {% endif %}
         {% if item.type == 'dir' %}
         <td><i class="fas fa-folder"><a href='{{ cloud_jobs_url }}{{tree.remote_path }}/{{ item.name }}/'> {{ item.name }} </a></i></td>
         {% elif item.type == 'file' %}
         <td><i class="fas fa-file"><a href='{{ cloud_jobs_url }}{{tree.remote_path }}/{{ item.name }}'> {{ item.name }} </a></i></td>
-        {% elif item.name.endswith('.gz') %}
-        <td><i class="fas fa-file-archive"><a href='{{ cloud_jobs_url }}{{tree.remote_path }}/{{ item.name }}'> {{ item.name }} </a></i></td>
-        {% endif %}
         <td> {{ item.mtime }} </td>
         <td> {{ item.size }} </td>
       </tr>
