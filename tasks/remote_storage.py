@@ -57,40 +57,38 @@ def generate_index(obj_data, is_root=False):
     return template.render(jinja_ctx)
 
 
-def write_index(obj_data, path):
-    """
-    Write index.html into every directory (locally).
-    """
-    index_loc = os.path.join(path, 'index.html')
-    with open(index_loc, 'w') as fd:
-        fd.write(generate_index(obj_data))
+def open_file(path):
+    with open(path, 'rb') as file_:
+        return file_.read()
 
 
-def create_local_indeces(job_dir):
-    """
-    Go through whole job result directory structure and gather all files with
-    metadata for every directory. Note: AWS S3 does not support classic web
-    server browseability capabilities so we do this in order to avoid
-    JavaScript on storage side.
-    """
-    job_dir_start = job_dir.rfind(os.sep) + 1
-    uuid = job_dir.split(os.sep)[-1]
+def create_s3_obj(loc_path, key):
+    client = boto3.client('s3')
+
+    if os.path.isdir(loc_path):
+        body = ''
+        content_type = 'text/plain'
+        key = key+'/'
+    else:
+        body = open_file(loc_path)
+        if key.endswith('.gz'):
+            content_type='text/plain'
+        else:
+            content_type='text/plain'
+    client.put_object(Body=body,
+                      Bucket='freeipa-org-pr-ci', Key='jobs/'+key,
+                      ContentEncoding='utf-8', ContentType=content_type)
+
+
+def upload_to_s3(uuid):
+    job_dir = os.path.join(JOBS_DIR, uuid)
+    job_path_start = job_dir.rfind(os.sep) + 1
     for root, dirs, files in os.walk(job_dir):
-        objects = []
+        key_rel_path = root[job_path_start:]
         for obj in dirs+files:
-            m_time_epoch = os.stat(os.path.join(root,obj)).st_mtime
-            mtime = datetime.fromtimestamp(m_time_epoch).strftime('%c')
-            size = os.stat(os.path.join(root,obj)).st_size
-            type = 'dir' if os.path.isdir(os.path.join(root,obj)) else 'file'
-            objects.append({'name': obj,
-                            'mtime': mtime,
-                            'size': size,
-                            'type': type})
-        remote_path = root[job_dir_start:]
-        obj_data = {'remote_path': remote_path,
-                    'uuid': uuid, 'objects': objects}
-        write_index(obj_data, root)
-        del objects
+            create_s3_obj(os.path.join(root, obj),
+                          os.path.join(key_rel_path, obj),
+                          )
 
 
 class GzipLogFiles(PopenTask):
@@ -115,48 +113,10 @@ class GzipLogFiles(PopenTask):
         self.shell = True
 
 
-class CloudSyncTask(PopenTask):
-    def __init__(self, src, dest, extra_args=None, **kwargs):
-        if extra_args is None:
-            extra_args = []
-
-        cmd_non_gz = [
-            'aws',
-            's3',
-            'sync',
-            src,
-            dest,
-            '--exclude "*.gz"',
-            ]
-
-        cmd_gz = [
-            'aws',
-            's3',
-            'sync',
-            src,
-            dest,
-            '--exclude "*"',
-            '--include "*.gz"',
-            '--content-encoding="gzip"',
-            '--content-type="text/html"',
-            ]
-
-        for cmd in (cmd_non_gz, cmd_gz):
-            cmd + extra_args
-            super(CloudSyncTask, self).__init__(cmd, **kwargs)
-
-
-class CloudUpload(CloudSyncTask):
+class CloudUpload():
     def __init__(self, uuid, **kwargs):
         if not re.match(UUID_RE, uuid):
             raise TaskException(self, "Invalid job UUID")
 
-        create_local_indeces(os.path.join(JOBS_DIR, uuid))
+        upload_to_s3(uuid)
 
-        super(CloudUpload, self).__init__(
-            os.path.join(JOBS_DIR, uuid),
-            os.path.join(CLOUD_DIR, CLOUD_JOBS_DIR, uuid),
-            **kwargs
-        )
-
-        create_jobs_index()
