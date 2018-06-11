@@ -1,0 +1,19 @@
+---
+- name: "make sure {{ cloud_dir }} exists"
+  file:
+    path: "{{ cloud_dir }}"
+    state: directory
+    mode: 0700
+
+- name: add cloud config file
+  copy:
+    src: ../cloud/config
+    dest: "{{ cloud_dir }}/config"
+    mode: 0600
+
+- name: add cloud credentials file
+  copy:
+    src: ../cloud/credentials
+    dest: "{{ cloud_dir }}/credentials"
+    mode: 0600
+

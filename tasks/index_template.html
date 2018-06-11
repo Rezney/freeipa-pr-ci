@@ -1,0 +1,38 @@
+<!doctype html>
+<head>
+   <title> FreeIPA PRCI results</title>
+   <link rel="stylesheet" href="https://use.fontawesome.com/releases/v5.0.13/css/all.css">
+   <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.7/css/bootstrap.min.css">
+</head>
+<body>
+   <img src="{{ cloud_url }}prci.png" />
+   <h3 class="text-center"> {{ obj_data.uuid }} </h3>
+   <hr />
+   <div class="container">
+      <table class="table table-striped">
+         <thead>
+            <tr>
+               <th> Name </th>
+               <th> Date Modified </th>
+               <th> Size (B) </th>
+            </tr>
+         </thead>
+         <tbody>
+            <tr>
+               <td><i class="fas fa-caret-up text-center"><a href='../'> Parent Directory </a></i></td>
+            </tr>
+            {% for item in obj_data.objects %}
+            <tr>
+               {% if item.type == 'dir' %}
+               <td><i class="fas fa-folder"><a href='{{ cloud_jobs_url }}{{obj_data.remote_path }}/{{ item.name }}/'> {{ item.name }} </a></i></td>
+               {% elif item.type == 'file' %}
+               <td><i class="fas fa-file"><a href='{{ cloud_jobs_url }}{{obj_data.remote_path }}/{{ item.name }}'> {{ item.name }} </a></i></td>
+               {% endif %}
+               <td> {{ item.mtime }} </td>
+               <td> {{ item.size }} </td>
+            </tr>
+            {% endfor %}
+         </tbody>
+      </table>
+   </div>
+</body>
