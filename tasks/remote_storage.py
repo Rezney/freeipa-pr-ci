@@ -17,22 +17,19 @@ def create_jobs_index():
     paginator = client.get_paginator('list_objects_v2')
     objects = []
     iterator = paginator.paginate(Bucket=CLOUD_BUCKET, Prefix=CLOUD_JOBS_DIR,
-                                  Delimiter='/',
-                                  PaginationConfig={'PageSize': None})
-    for job_dir in iterator.search('CommonPrefixes'):
-        job_id = job_dir.get('Prefix')
-        for job in client.list_objects(Bucket=CLOUD_BUCKET,
-                                       Prefix=job_id,
-                                       Delimiter='/')['Contents']:
-            name = job['Key'].split(os.sep)[-2]
-            mtime_obj = job['LastModified']
-            mtime = mtime_obj.strftime('%c')
-            size = job['Size']
-            type = 'dir'
-            objects.append({'name': name,
-                            'mtime': mtime,
-                            'size': size,
-                            'type': type})
+                                  Delimiter='/', PaginationConfig={'PageSize': None})
+    for job_uuid in iterator.search('CommonPrefixes'):
+        job_dir = job_uuid['Prefix']
+        job = client.get_object(Bucket=CLOUD_BUCKET, Key=job_dir)
+        name = job_dir.split(os.sep)[-2]
+        mtime_obj = job['LastModified']
+        mtime = mtime_obj.strftime('%c')
+        size = '4096'
+        type = 'dir'
+        objects.append({'name': name,
+                        'mtime': mtime,
+                        'size': size,
+                        'type': type})
 
     obj_data = {'remote_path': CLOUD_URL+CLOUD_JOBS_DIR, 'objects': objects}
 
@@ -40,10 +37,10 @@ def create_jobs_index():
                       Bucket=CLOUD_BUCKET, Key=CLOUD_JOBS_DIR+'index.html',
                       ContentEncoding='utf-8', ContentType='text/plain')
 
-
 def generate_index(obj_data, is_root=False):
     """
-    Generate Jinja2 template with all AWS S3 objects (files and directories)
+    Generate Jinja2 template for inde.html with all AWS S3 objects
+    (files and directories)
     """
 
     jinja_ctx = {'obj_data': obj_data, 'cloud_jobs_url': CLOUD_JOBS_URL,
@@ -64,25 +61,27 @@ def open_file(path):
 
 def create_s3_obj(loc_path, key):
     client = boto3.client('s3')
+    content_params = {}
 
     if os.path.isdir(loc_path):
         body = ''
-        content_type = 'text/plain'
         key = key+'/'
     else:
         body = open_file(loc_path)
         if key.endswith('.gz'):
-            content_type='text/plain'
-        else:
-            content_type='text/plain'
+            content_params.update({'ContentType': 'text/plain'})
+            content_params.update({'ContentEncoding': 'gzip'})
     client.put_object(Body=body,
-                      Bucket='freeipa-org-pr-ci', Key='jobs/'+key,
-                      ContentEncoding='utf-8', ContentType=content_type)
+                      Bucket=CLOUD_BUCKET,
+                      Key=CLOUD_JOBS_DIR+key,
+                      **content_params)
 
 
 def upload_to_s3(uuid):
     job_dir = os.path.join(JOBS_DIR, uuid)
     job_path_start = job_dir.rfind(os.sep) + 1
+    # create UUID directory just once
+    create_s3_obj(job_dir, uuid)
     for root, dirs, files in os.walk(job_dir):
         key_rel_path = root[job_path_start:]
         for obj in dirs+files:
