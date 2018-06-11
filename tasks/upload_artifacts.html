@@ -1,13 +1,13 @@
 <!doctype html>
 <head>
 <title> FreeIPA PRCI results</title>
-<link rel="stylesheet" href="https://use.fontawesome.com/releases/v5.0.13/css/all.css" integrity="sha384-DNOHZ68U8hZfKXOrtjWvjxusGo9WQnrNx2sqG0tfsghAvtVlRW3tvkXWZh58N9jp" crossorigin="anonymous">
+<link rel="stylesheet" href="https://use.fontawesome.com/releases/v5.0.13/css/all.css">
 <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.7/css/bootstrap.min.css">
 </head>
 
 <body>
 <img class="text-center" src="{{ cloud_url }}prci.png" />
-<h3 class="text-center"> {{ tree.uuid }} </h3>
+<h3 class="text-center"> {{ obj_data.uuid }} </h3>
 <hr />
 <div class="container">
   <table class="table table-striped">
@@ -19,17 +19,18 @@
       </tr>
     </thead>
     <tbody>
-      {% for item in tree.objects %}
+      {% for item in obj_data.objects %}
+      {% if end_of_root %}
+        <td><i class="fas fa-caret-up"><a href='../'> Parent Directory </a></i></td>
+      {% endif %}
       <tr>
-        {% if item.type == 'parent_link' %}
-        <td><i class="fas fa-caret-up"><a href='../'> {{ item.name }} </a></i></td>
-        {% endif %}
         {% if item.type == 'dir' %}
-        <td><i class="fas fa-folder"><a href='{{ cloud_jobs_url }}{{tree.remote_path }}/{{ item.name }}/'> {{ item.name }} </a></i></td>
+        <td><i class="fas fa-folder"><a href='{{ cloud_jobs_url }}{{obj_data.remote_path }}/{{ item.name }}/'> {{ item.name }} </a></i></td>
         {% elif item.type == 'file' %}
-        <td><i class="fas fa-file"><a href='{{ cloud_jobs_url }}{{tree.remote_path }}/{{ item.name }}'> {{ item.name }} </a></i></td>
+        <td><i class="fas fa-file"><a href='{{ cloud_jobs_url }}{{obj_data.remote_path }}/{{ item.name }}'> {{ item.name }} </a></i></td>
         <td> {{ item.mtime }} </td>
         <td> {{ item.size }} </td>
+        {% endif %}
       </tr>
       {% endfor %}
     </tbody>

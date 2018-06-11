@@ -16,10 +16,14 @@ def create_jobs_index():
     client = boto3.client('s3')
     paginator = client.get_paginator('list_objects_v2')
     objects = []
-    iterator = paginator.paginate(Bucket=CLOUD_BUCKET, Prefix='jobs/', Delimiter='/', PaginationConfig={'PageSize': None})
+    iterator = paginator.paginate(Bucket=CLOUD_BUCKET, Prefix=CLOUD_JOBS_DIR,
+                                  Delimiter='/',
+                                  PaginationConfig={'PageSize': None})
     for job_dir in iterator.search('CommonPrefixes'):
         job_id = job_dir.get('Prefix')
-        for job in client.list_objects(Bucket=CLOUD_BUCKET, Prefix=job_id, Delimiter='/')['Contents']:
+        for job in client.list_objects(Bucket=CLOUD_BUCKET,
+                                       Prefix=job_id,
+                                       Delimiter='/')['Contents']:
             name = job['Key'].split(os.sep)[-2]
             mtime_obj = job['LastModified']
             mtime = mtime_obj.strftime('%c')
@@ -30,26 +34,34 @@ def create_jobs_index():
                             'size': size,
                             'type': type})
 
-    client.put_object(Body=generate_index(objects), Bucket=CLOUD_BUCKET,
-                      Key=CLOUD_JOBS_DIR+'index.html', ContentEncoding='utf-8')
+    obj_data = {'remote_path': CLOUD_URL+CLOUD_JOBS_DIR, 'objects': objects}
+
+    client.put_object(Body=generate_index(obj_data, is_root=True),
+                      Bucket=CLOUD_BUCKET, Key=CLOUD_JOBS_DIR+'index.html',
+                      ContentEncoding='utf-8', ContentType='text/plain')
 
 
-def generate_index(obj_data):
+def generate_index(obj_data, is_root=False):
     """
     Generate Jinja2 template with all AWS S3 objects (files and directories)
     """
+
+    jinja_ctx = {'obj_data': obj_data, 'cloud_jobs_url': CLOUD_JOBS_URL,
+        'cloud_url': CLOUD_URL,}
+
+    if is_root:
+        jinja_ctx.update({'is_root': True})
+
     with open(os.path.join(TASKS_DIR, 'upload_artifacts.html'), 'r') as file_:
         template = Template(file_.read())
-    return template.render(
-        {'tree': obj_data, 'cloud_jobs_url': CLOUD_JOBS_URL,
-         'cloud_url': CLOUD_URL})
+    return template.render(jinja_ctx)
 
 
-def write_index(obj_data):
+def write_index(obj_data, path):
     """
-    Write index.html into every directory.
+    Write index.html into every directory (locally).
     """
-    index_loc = os.path.join(obj_data['local_path'], 'index.html')
+    index_loc = os.path.join(path, 'index.html')
     with open(index_loc, 'w') as fd:
         fd.write(generate_index(obj_data))
 
@@ -63,25 +75,21 @@ def create_local_indeces(job_dir):
     """
     job_dir_start = job_dir.rfind(os.sep) + 1
     uuid = job_dir.split(os.sep)[-1]
-    for path, dirs, files in os.walk(job_dir):
+    for root, dirs, files in os.walk(job_dir):
         objects = []
-        if path != job_dir:
-            prev_path = '/'.join(path[job_dir_start:].split(os.sep)[:-1])
-            objects.append({'name': 'Parent directory', 'type': 'parent_link',
-                            'prev_path': prev_path})
         for obj in dirs+files:
-            m_time_epoch = os.stat(os.path.join(path,obj)).st_mtime
+            m_time_epoch = os.stat(os.path.join(root,obj)).st_mtime
             mtime = datetime.fromtimestamp(m_time_epoch).strftime('%c')
-            size = os.stat(os.path.join(path,obj)).st_size
-            type = 'dir' if os.path.isdir(os.path.join(path,obj)) else 'file'
+            size = os.stat(os.path.join(root,obj)).st_size
+            type = 'dir' if os.path.isdir(os.path.join(root,obj)) else 'file'
             objects.append({'name': obj,
                             'mtime': mtime,
                             'size': size,
                             'type': type})
-        dest_path = path[job_dir_start:]
-        obj_data = {'local_path': path, 'remote_path': dest_path, 'uuid': uuid,
-                  'objects': objects}
-        write_index(obj_data)
+        remote_path = root[job_dir_start:]
+        obj_data = {'remote_path': remote_path,
+                    'uuid': uuid, 'objects': objects}
+        write_index(obj_data, root)
         del objects
 
 
@@ -112,16 +120,30 @@ class CloudSyncTask(PopenTask):
         if extra_args is None:
             extra_args = []
 
-        cmd = [
+        cmd_non_gz = [
             'aws',
             's3',
             'sync',
             src,
             dest,
-        ]
-        cmd + extra_args
+            '--exclude "*.gz"',
+            ]
 
-        super(CloudSyncTask, self).__init__(cmd, **kwargs)
+        cmd_gz = [
+            'aws',
+            's3',
+            'sync',
+            src,
+            dest,
+            '--exclude "*"',
+            '--include "*.gz"',
+            '--content-encoding="gzip"',
+            '--content-type="text/html"',
+            ]
+
+        for cmd in (cmd_non_gz, cmd_gz):
+            cmd + extra_args
+            super(CloudSyncTask, self).__init__(cmd, **kwargs)
 
 
 class CloudUpload(CloudSyncTask):
