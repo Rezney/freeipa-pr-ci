@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<head>
+  <meta charset="utf-8">
+  <title> FreeIPA PRCI results</title>
+  <link rel="stylesheet" href="//use.fontawesome.com/releases/v5.0.13/css/all.css">
+  <link rel="stylesheet" href="//maxcdn.bootstrapcdn.com/bootstrap/3.3.7/css/bootstrap.min.css">
+  <link rel="stylesheet" href="//cdn.datatables.net/1.10.18/css/jquery.dataTables.min.css">
+  <script src="//code.jquery.com/jquery-3.3.1.min.js"></script>
+  <script src="//cdn.datatables.net/1.10.18/js/jquery.dataTables.min.js"></script>
+</head>
+<body>
+  <script>
+    $(document).ready(function() {
+        $('#results').DataTable( {
+            "order": [[ 4, "desc" ]],
+            "pageLength": 50
+            }
+        );
+    } );
+  </script>
+  <a href="{{ cloud_jobs_url }}"><img src="{{ cloud_url }}prci.png"></a>
+  <h4 class="text-center"> List of PRCI "freeipa" PRs job directories </h4>
+  <hr>
+  <div class="container">
+    <table id="results" class="table table-striped">
+      <thead>
+        <tr>
+          <th> Name </th>
+          <th> PR # </th>
+          <th> Author </th>
+          <th> Task </th>
+          <th> Date </th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for item in obj_data.objects %}
+        <tr>
+          <td><i class="fas fa-folder"><a href="{{ cloud_jobs_url }}{{ item.name }}/"> {{ item.name }} </a></i></td>
+          <td> <a href="https://github.com/freeipa/freeipa/pull/{{ item.pr_number }}"> {{ item.pr_number }} </a></td>
+          {% if item.pr_author == 'freeipa-pr-ci' %}
+            <td> <a href="https://github.com/{{ item.pr_author }}/freeipa/"><i class="fas fa-moon"></i></a></td>
+          {% else %}
+            <td> <a href="https://github.com/{{ item.pr_author }}/freeipa/"> {{ item.pr_author }} </a></td>
+          {% endif %}
+          <td> {{ item.task_name }} {% if item.returncode == '0' %}
+            <i class="fas fa-check" style="color:#28A745"></i> {% else %}
+            <i class="fas fa-times" style="color:#CB2431"></i> {% endif %}
+          </td>
+          <td> {{ item.mtime.strftime('%Y-%m-%d %H:%M') }} </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <br>
+</body>
