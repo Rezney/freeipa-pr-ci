@@ -119,7 +119,10 @@ class JobTask(FallibleTask):
         Create jobs root index
         """
         try:
-            self.execute_subtask(CreateRootIndex(self.repo_owner))
+            self.execute_subtask(
+                CreateRootIndex(self.repo_owner,
+                                timeout=5*60,
+                                raise_on_err=False))
         except Exception as exc:
             logging.error('Failed to create jobs root index.')
             logging.debug(exc, exc_info=True)
