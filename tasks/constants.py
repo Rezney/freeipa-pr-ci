@@ -10,6 +10,7 @@ CLOUD_DIR = 's3://freeipa-org-pr-ci/'
 CLOUD_URL = 'http://freeipa-org-pr-ci.s3-website.eu-central-1.amazonaws.com/'
 CLOUD_JOBS_DIR = 'jobs/'
 CLOUD_JOBS_URL = urllib.parse.urljoin(CLOUD_URL, CLOUD_JOBS_DIR)
+CLOUD_DB = 'PRCI_JOB_RUN'
 
 TASKS_DIR = os.path.join(BASE_DIR, 'tasks')
 

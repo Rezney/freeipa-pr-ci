@@ -278,7 +278,12 @@ def main():
             ),
             key=lambda pr: not pr.prioritized
         )
+
+        reset = False
+
         for pull_request in pull_requests:
+            if reset:
+                break
             for task in process_pull_request(world, pull_request, repo_url):
                 exit_handler.register_task(task)
                 world.available_resources.take(task)
@@ -299,6 +304,8 @@ def main():
                     logger.info(
                         "Available resources: %s", world.available_resources
                     )
+                    reset = True
+                    break
 
         sleep(no_task_backoff_time)
 
