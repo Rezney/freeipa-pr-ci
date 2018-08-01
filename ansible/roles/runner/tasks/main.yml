@@ -4,9 +4,6 @@
   tags: deployment
 - include: add_cloud_conf_files.yml
   tags: cloud_upload
-- include: enable_nested_virt.yml
-  when: enable_nested_virt
-  tags: nested_virt
 - include: setup.yml
 - include: create_libvirt_pool.yml
 - include: deploy_pr_ci.yml
