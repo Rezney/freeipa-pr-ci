@@ -54,6 +54,12 @@
             UserKnownHostsFile /dev/null
             IdentityFile /root/.ssh/git_ssh_key
 
+- name: clone freeipa-pr-ci repo
+  git:
+    dest: "{{ basedir }}/freeipa-pr-ci"
+    repo: "{{ pr_ci_repo }}"
+    force: true
+
 - name: clone freeipa fork
   git:
     repo: "git@github_pr_tool:{{ repo_owner }}/freeipa.git"
