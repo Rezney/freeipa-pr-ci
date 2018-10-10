@@ -1,0 +1,20 @@
+- name: schedule opening template generation PRs
+  cron:
+    name: "openclose_auto_template_pr-{{ identifier }}"
+    minute: "0"
+    hour: "15"
+    weekday: "7"
+    job: >
+           python3 {{ basedir }}/open_close_pr.py
+           open_template_pr
+           --config {{ basedir }}/config.yml
+           --id {{ identifier }}
+           --repo_path {{ basedir }}/freeipa
+           --prci_repo_path {{ basedir }}/freeipa-pr-ci
+           --prci_def_dir {{ prci_def_dir }}
+           --branch {{ branch }}
+           --fedora_ver {{ fedora_ver }}
+           --atlas_config /root/.config/atlas_box_uploader.yaml
+           --pr_against_upstream {{ pr_against_upstream | bool }}
+    user: root
+    state: present

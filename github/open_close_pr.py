@@ -1,13 +1,17 @@
 #!/usr/bin/python3
 
 import os
+import shutil
 import github3
 import argparse
 import logging
-import yaml
+import ruamel.yaml
 from cachecontrol.adapter import CacheControlAdapter
 import git
 from git import Repo
+from urllib.parse import urljoin
+import subprocess
+import requests
 
 
 REF_FORMAT = 'refs/heads/'
@@ -17,8 +21,9 @@ PRCI_DEF_DIR = 'ipatests/prci_definitions'
 REMOTE_REPO = 'https://github.com/freeipa/freeipa.git'
 UPSTREAM_REMOTE_REF = 'upstream'
 MYGITHUB_REMOTE_REF = 'mygithub'
-BOX_TEMPL_NAME = 'ci-{{branch}}-f{{fedora_version}}'
-BOX_TEMPL_NAME_RE =
+TEMPL_NAME = 'ci-{branch}-f{fedora_version}'
+VAGRANT_LINK = 'https://app.vagrantup.com/api/v1/box/freeipa/'
+
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -28,8 +33,9 @@ logger.addHandler(consoleHandler)
 
 
 def load_yaml(yml_path):
+    yaml = ruamel.yaml.YAML()
     try:
-        with open(yml_path) as yml_file:
+        with open(yml_path, 'r+') as yml_file:
             return yaml.load(yml_file)
     except IOError as exc:
         raise argparse.ArgumentTypeError(
@@ -38,6 +44,14 @@ def load_yaml(yml_path):
         raise argparse.ArgumentTypeError(
             'Failed to parse YAML from {}: {}'.format(yml_path, exc))
 
+def dump_yaml(yml_path, yml_data):
+    yaml = ruamel.yaml.YAML()
+    try:
+        with open(yml_path, 'w') as yml_file:
+            yaml.dump(yml_data, yml_file)
+    except OSError:
+        logger.error('Cannot write to %s', yml_path)
+        raise
 
 class AutomatedPR(object):
 
@@ -47,6 +61,68 @@ class AutomatedPR(object):
         self.repo = github.repository(repo['owner'], repo['name'])
         self.upstream_repo = github.repository('freeipa', 'freeipa')
         self.args = args
+
+    def get_newest_templ_ver(self):
+        atlas_conf = load_yaml(self.args.atlas_config)
+        token = atlas_conf['token']
+        bearer = 'Bearer {}'.format(token)
+
+        url = urljoin(VAGRANT_LINK, 'ci-master-f28')
+
+        headers = {'Content-Type': 'application/json',
+                   'Authorization': bearer}
+
+        res = requests.get(url, headers=headers)
+        res.raise_for_status()
+
+        latest_ver = res.json()['current_version']['version']
+        logger.info('Latest %s Vagrant box version is: %s', (
+            self.args.branch, latest_ver))
+
+        return latest_ver
+
+    def clean_template_env(self):
+        """
+        We have to clean everything in case there was previously failed
+        create template task
+        """
+        templ_name = TEMPL_NAME.format(
+            branch=self.args.branch, fedora_version=self.args.fedora_ver)
+        templ_vm_name = templ_name + '_template'
+        box_name = 'f{}'.format(self.args.fedora_ver)
+        libvirt_vol_name = '{}.img'.format(templ_vm_name)
+
+        subprocess.run(['virsh', 'destroy', templ_vm_name])
+        subprocess.run(['virsh', 'undefine', templ_vm_name])
+        subprocess.run(['vagrant', 'box', 'remove', box_name])
+        subprocess.run(['virsh', 'vol-delete', '--pool', 'default',
+                        libvirt_vol_name])
+        try:
+            shutil.rmtree(os.path.join('/tmp', templ_name))
+        except OSError:
+            pass
+
+    def build_new_template(self):
+        inv_path = 'ansible/hosts/runner_localhost'
+        playbook_path = 'ansible/create_template_box.yml'
+
+        os.chmod(os.path.join(self.args.prci_repo_path,
+                              'keys/vagrant'), 0o0600)
+        os.chmod(os.path.join(self.args.prci_repo_path,
+                              'keys/freeipa_pr_ci_insecure'), 0o0600)
+
+        try:
+            logger.info('Started playbook %s', playbook_path)
+            res = subprocess.check_output([
+                    'ansible-playbook',
+                    '-i', inv_path,
+                    playbook_path,
+                    '-e', 'fedora_version={}'.format(self.args.fedora_ver),
+                    '-e', 'git_branch={}'.format(self.args.branch),
+                ], cwd=self.args.prci_repo_path)
+            return res.decode()
+        except subprocess.CalledProcessError:
+            logger.error('Ansible command failed with: %s', res.decode())
 
     def commit_new_prci_config_file(self):
         """
@@ -71,12 +147,52 @@ class AutomatedPR(object):
         repo.git.commit('-m', DEFAULT_COMMIT_MSG)
         repo.git.push("-u", MYGITHUB_REMOTE_REF, self.args.id)
 
-    def bump_prci_version(self, templ_name, templ_ver):
-        for r, d, f in os.walk(os.path.join(self.arg.repo_path, PRCI_DEF_DIR)):
-            file = os.path.join(r, f)
-            yaml_text = load_yaml(file)
-            templ_name_re =
+    def commit_prci_versions_bump(self):
+        repo = Repo(self.args.repo_path)
 
+        self.delete_local_branch()
+
+        # creates new branch using the identifier as the name
+        repo.git.checkout('-b', self.args.id)
+        repo.git.add(self.args.prci_def_dir)
+        repo.git.commit('-m', DEFAULT_COMMIT_MSG)
+        repo.git.push("-u", MYGITHUB_REMOTE_REF, self.args.id)
+
+    def get_templ_list(self, yaml_data):
+        """
+        Find list where template name and version are defined
+        """
+        if isinstance(yaml_data, list):
+            for elem in yaml_data:
+                res = self.get_templ_list(elem)
+                if res is not None:
+                    return res
+        elif isinstance(yaml_data, dict):
+            for key in yaml_data:
+                val = yaml_data[key]
+                if key == 'template':
+                    if 'name' in val and 'version' in val:
+                        return val
+                res = self.get_templ_list(val)
+                if res is not None:
+                    return res
+        return None
+
+    def get_prci_defs(self):
+        for file in os.scandir(
+                os.path.join(self.args.repo_path, PRCI_DEF_DIR)):
+            yield file.path
+
+    def bump_prci_version(self, templ_ver):
+        for file in self.get_prci_defs():
+            yaml_data = load_yaml(file)
+            template = self.get_templ_list(yaml_data)
+            if template:
+                template['version'] = templ_ver
+                yaml = ruamel.yaml.YAML()
+                dump_yaml(file, yaml_data)
+            else:
+                logger.info('No template found in %s', file)
 
     def close_older_pr(self):
         refs = {r.ref: r for r in self.repo.refs()}
@@ -84,7 +200,7 @@ class AutomatedPR(object):
         try:
             ref = refs[ref_uri]
             ref.delete()
-            logger.debug("Branch %s deleted", self.args.id)
+            logger.debug("Older branch %s deleted in upstream", self.args.id)
         except KeyError:
             pass
 
@@ -110,7 +226,7 @@ class AutomatedPR(object):
         except:
             pass
 
-    def nightly_pr(self):
+    def open_nightly_pr(self):
         # before opening a new PR, we close the old one with the same
         # identifier. The PR list shoud have only one open PR.
         self.close_older_pr()
@@ -123,18 +239,28 @@ class AutomatedPR(object):
                  else self.repo.owner.login)
         logger.debug("A new PR against %s/freeipa will be created with "
                      "the title %s", owner, pr_title)
-        self.open_pr(self, pr_title)
-        self.delete_local_branch()
+        self.create_pr(pr_title)
 
-    def template_pr(self):
-        pass
+    def open_template_pr(self):
+        self.clean_template_env()
+        #FIXME: capture ansible output to get newest template component
+        # versions and put the info to PR description
+        res = self.build_new_template()
+        self.close_older_pr()
+        self.rebase_branch()
+        latest_ver = self.get_newest_templ_ver()
+        self.bump_prci_version(latest_ver)
+        self.commit_prci_versions_bump()
 
-    def open_pr(self, pr_title):
+        pr_title = '[{}] PRCI template auto'.format(self.args.id)
+
         owner = ('freeipa' if self.args.pr_against_upstream
                  else self.repo.owner.login)
         logger.debug("A new PR against %s/freeipa will be created with "
                      "the title %s", owner, pr_title)
+        self.create_pr(pr_title)
 
+    def create_pr(self, pr_title):
         try:
             if self.args.pr_against_upstream:
                 users_head = '{}:{}'.format(self.repo.owner.login, self.args.id)
@@ -148,60 +274,38 @@ class AutomatedPR(object):
             logger.info("PR %s created", pr.number)
         except github3.GitHubError as error:
             logger.error(error.errors)
+        finally:
+            self.delete_local_branch()
 
-    def run(self, args):
-        fnc = getattr(self, args.command)
-        logger.debug('Executing %s command', args.command)
-        return fnc(args)
+
+    def run(self):
+        fnc = getattr(self, self.args.command)
+        logger.debug('Executing %s command', self.args.command)
+        return fnc()
 
 
 def create_parser():
-    parser = argparse.ArgumentParser(description='')
+    parent_parser = argparse.ArgumentParser(add_help=False)
 
-    parser.add_argument(
+    parent_parser.add_argument(
         '--branch', type=str, required=True,
         help='Branch name to open PR against it'
     )
 
-    parser.add_argument(
-        '--repo_path', type=str, required=True,
-        help='freeIPA repo path'
+    parent_parser.add_argument(
+        '--id', type=str, required=True,
+        help='PR identifier'
     )
 
-    commands = parser.add_subparsers(dest='command')
-
-    nightly = commands.add_parser('open__nightly_pr',
-                        description="Opens a PR for Nightly Tests")
-
-    nightly.add_argument(
+    parent_parser.add_argument(
         '--config', type=config_file, required=True,
         help='YAML file with complete configuration.',
     )
 
-    nightly.add_argument(
-        '--prci_config', type=str, required=True,
-        help="Relative path to PR CI test definition (yaml) file in "
-             "FreeIPA repo. E.g: ipatests/prci_definitions/gating"
+    parent_parser.add_argument(
+        '--repo_path', type=str, required=True,
+        help='freeIPA repo path'
     )
-
-    template = commands.add_parser('open_template_pr',
-        description="Opens a PR for bumping PRCI template version")
-
-    template.add_argument(
-        '--prci_def_dir', type=str, required=True,
-        help='PRCI definitions relative path in freeipa repo'
-    )
-
-    template.add_argument(
-        '--branch', type=str, required=True,
-        help='Branch name to open PR against'
-    )
-
-    template.add_argument(
-        '--fedora_ver', type=int, required=True,
-        help='Fedora version'
-    )
-
 
     def __string_to_bool(value):
         if value.lower() in ['yes', 'true', 't', 'y', '1']:
@@ -210,10 +314,45 @@ def create_parser():
             return False
         raise argparse.ArgumentTypeError('Boolean value expected.')
 
-    parser.add_argument(
+    parent_parser.add_argument(
         '--pr_against_upstream', type=__string_to_bool, required=True,
-        help="Should the PR be open against the upstream repo? Use False for "
-             "opening against your own freeipa repo"
+        help="Should the PR be open against the upstream repo?. Use False for "
+             "opening agaist your own freeipa repo"
+    )
+
+    parser = argparse.ArgumentParser(add_help=False)
+    commands = parser.add_subparsers(dest='command')
+
+    nightly = commands.add_parser('open_nightly_pr', parents=[parent_parser],
+                        description="Opens a PR for Nightly Tests")
+
+    nightly.add_argument(
+        '--prci_config', type=str, required=True,
+        help="Relative path to PR CI test definition (yaml) file in "
+             "FreeIPA repo. E.g: ipatests/prci_definitions/gating"
+    )
+
+    template = commands.add_parser('open_template_pr', parents=[parent_parser],
+        description="Opens a PR for bumping PRCI template version")
+
+    template.add_argument(
+        '--prci_def_dir', type=str, required=True,
+        help='PRCI definitions relative path in freeipa repo'
+    )
+
+    template.add_argument(
+        '--fedora_ver', type=int, required=True,
+        help='Fedora version'
+    )
+
+    template.add_argument(
+        '--prci_repo_path', type=str, required=True,
+        help='freeIPA PRCI repo path'
+    )
+
+    template.add_argument(
+        '--atlas_config', type=str, required=True,
+        help='Vagrant atlas config path'
     )
 
     return parser

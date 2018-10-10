@@ -3,4 +3,3 @@ repository:
     name: {{ repo_name }}
 credentials:
     token: {{ github_token }}
-

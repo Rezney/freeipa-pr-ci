@@ -2,7 +2,7 @@
 - hosts: scheduler
   remote_user: root
   name: deploy open_close_pr tool
-  gather_facts: no
+  gather_facts: yes
   vars:
     repo_name: freeipa
 
@@ -38,12 +38,27 @@
                opening it agaist your own freeipa repo (yes/no)"
       private: false
 
+    - name: prci_def_dir
+      prompt: "Provide PRCI test definitions folder.
+               E.g. ipatests/prci_definition"
+      private: false
+
+    - name: fedora_ver
+      prompt: "Provide Fedora version (int) for template creation. E.g. 28"
+      private: false
+
+    - name: vagrant_atlas_token
+      prompt: "Provide Vagrant atlas token for uploading boxes"
+      private: false
+
   pre_tasks:
     - name: install python and deps for ansible modules
       raw: dnf install -y python2 python2-dnf libselinux-python
 
   roles:
-    - role: automation/openclose_pr
+    - role: automation/setup
       when: > 
             prci_config != "" and github_token != "" and 
             identifier != "" and  repo_owner != 'freeipa'
+    - role: automation/nightly_pr
+    - role: automation/template_pr
